@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TSV Defect Inspector — SEM/FIB 이미지 기반 결함 탐지</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <h1>🔬 TSV Defect Inspector</h1>
+            <p class="subtitle">SEM/FIB 이미지 기반 TSV 결함 자동 탐지 시스템</p>
+        </div>
+    </header>
+
+    <main>
+        <!-- 업로드 영역 -->
+        <section class="upload-section">
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">📂</div>
+                <p class="upload-text">SEM/FIB 이미지를 여기에 드래그하거나 클릭해서 업로드하세요</p>
+                <p class="upload-hint">PNG, JPG, TIFF, BMP 지원 (최대 16MB)</p>
+                <input type="file" id="fileInput" accept=".png,.jpg,.jpeg,.tif,.tiff,.bmp" hidden>
+            </div>
+        </section>
+
+        <!-- 미리보기 -->
+        <section class="preview-section" id="previewSection" style="display:none;">
+            <div class="preview-card">
+                <h3>업로드된 이미지</h3>
+                <img id="previewImage" alt="업로드된 SEM/FIB 이미지">
+                <div class="preview-actions">
+                    <button id="analyzeBtn" class="btn btn-primary">🔍 결함 분석 시작</button>
+                    <button id="resetBtn" class="btn btn-secondary">↩ 다시 선택</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 로딩 -->
+        <section class="loading-section" id="loadingSection" style="display:none;">
+            <div class="spinner"></div>
+            <p>이미지를 분석하고 있어요... 잠시만 기다려주세요</p>
+        </section>
+
+        <!-- 결과 영역 -->
+        <section class="result-section" id="resultSection" style="display:none;">
+            <h2>📋 분석 결과</h2>
+
+            <!-- 요약 카드 -->
+            <div class="summary-cards" id="summaryCards"></div>
+
+            <!-- 결과 이미지 비교 -->
+            <div class="image-comparison">
+                <div class="comparison-item">
+                    <h3>원본 이미지</h3>
+                    <img id="originalResult" alt="원본">
+                </div>
+                <div class="comparison-item">
+                    <h3>결함 탐지 결과</h3>
+                    <img id="analyzedResult" alt="분석 결과">
+                </div>
+            </div>
+
+            <!-- 결함 상세 목록 -->
+            <div class="defect-table-wrapper">
+                <h3>결함 상세 목록</h3>
+                <table class="defect-table" id="defectTable">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>결함 유형</th>
+                            <th>위치 (x, y)</th>
+                            <th>크기 (w × h)</th>
+                            <th>신뢰도</th>
+                            <th>설명</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+                <p class="no-defects" id="noDefects" style="display:none;">
+                    ✅ 결함이 탐지되지 않았습니다. 양품으로 판정됩니다.
+                </p>
+            </div>
+
+            <button id="newAnalysisBtn" class="btn btn-primary" style="margin-top:2rem;">🔄 새 이미지 분석</button>
+        </section>
+
+        <!-- 결함 유형 가이드 -->
+        <section class="guide-section">
+            <h2>📖 TSV 결함 유형 가이드</h2>
+            <div class="guide-grid">
+                <div class="guide-card" style="border-left: 4px solid #e74c3c;">
+                    <h4>① Open Defect (TSV-RDL)</h4>
+                    <p>TSV와 RDL 사이 구리 충전이 불완전할 때 발생해요. 마치 수도관 연결부가 제대로 안 맞아서 물이 새는 것과 같아요. 직렬 커패시턴스와 고저항 경로가 생겨 신호 전달이 방해돼요.</p>
+                </div>
+                <div class="guide-card" style="border-left: 4px solid #e67e22;">
+                    <h4>② Open Defect (Bump)</h4>
+                    <p>범프 크기가 불균일해서 상대 다이에 닿지 못할 때 생겨요. 레고 블록 높이가 달라서 위층이 제대로 안 끼워지는 것과 비슷해요. 신호 경로가 전기적으로 끊겨요.</p>
+                </div>
+                <div class="guide-card" style="border-left: 4px solid #f1c40f;">
+                    <h4>③ Short Defect (Bump)</h4>
+                    <p>본딩 시 범프가 옆으로 퍼져서 옆 범프와 맞닿는 상태예요. 빵 반죽을 누르면 옆으로 퍼져서 옆 반죽과 붙는 것과 같아요. 의도치 않은 전기 경로와 발열이 생겨요.</p>
+                </div>
+                <div class="guide-card" style="border-left: 4px solid #9b59b6;">
+                    <h4>④ Void Formation (TSV)</h4>
+                    <p>구리 충전 속도 불량이나 열응력으로 TSV 내부에 빈 공간이 생겨요. 아이스크림 안에 공기 구멍이 생기는 것과 비슷해요. 기계적·열적 스트레스 상황에서 치명적이에요.</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>TSV Defect Inspector — 대학생 프로젝트 | SEM/FIB Image Analysis</p>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
