@@ -116,6 +116,7 @@ function displayResults(data) {
         "Open Defect (Bump)": { class: "open-bump", label: "② Open (Bump)" },
         "Short Defect (Bump)": { class: "short-bump", label: "③ Short (Bump)" },
         "Void Formation (TSV)": { class: "void-tsv", label: "④ Void (TSV)" },
+        "Incomplete Fill (TSV)": { class: "incomplete-fill", label: "⑤ Incomplete Fill" },
     };
 
     let cardsHTML = `
@@ -165,8 +166,94 @@ function displayResults(data) {
         });
     }
 
+    // 공정 원인 분석 표시
+    if (data.process_analysis && data.total_defects > 0) {
+        renderProcessAnalysis(data.process_analysis);
+    } else {
+        document.getElementById("processAnalysis").style.display = "none";
+    }
+
     // 결과로 스크롤
     resultSection.scrollIntoView({ behavior: "smooth" });
+}
+
+// ===== 공정 원인 분석 렌더링 =====
+function renderProcessAnalysis(analysis) {
+    const section = document.getElementById("processAnalysis");
+    section.style.display = "block";
+
+    // 1) 공정 파이프라인
+    const pipeline = document.getElementById("processPipeline");
+    pipeline.innerHTML = analysis.stages.map((s) => {
+        const relatedHTML = s.related_defects.length > 0
+            ? `<div class="stage-related">${s.related_defects.join(", ")}</div>`
+            : "";
+        return `
+            <div class="pipeline-stage">
+                <div class="stage-circle risk-${s.risk_level}">${s.risk_pct}%</div>
+                <div class="stage-name">${s.stage}</div>
+                <div class="stage-label">${s.name}</div>
+                <span class="stage-risk-tag risk-${s.risk_level}">${getRiskLabel(s.risk_level)}</span>
+                ${relatedHTML}
+            </div>`;
+    }).join("");
+
+    // 2) 결함-공정 매트릭스 테이블
+    const matrixWrapper = document.getElementById("matrixWrapper");
+    const matrixKeys = Object.keys(analysis.matrix);
+    if (matrixKeys.length > 0) {
+        matrixWrapper.style.display = "block";
+        const stages = ["S1 Via", "S2 Liner", "S3 Cu Fill", "S4 CMP", "S5 Bond"];
+        const thead = document.querySelector("#matrixTable thead");
+        const tbody = document.querySelector("#matrixTable tbody");
+
+        thead.innerHTML = `<tr><th>결함</th>${stages.map(s => `<th>${s}</th>`).join("")}</tr>`;
+        tbody.innerHTML = matrixKeys.map((defect) => {
+            const row = analysis.matrix[defect];
+            const cells = stages.map((s) => {
+                const val = row[s] || "";
+                if (val === "high") return `<td><span class="matrix-dot-high"></span></td>`;
+                if (val === "low") return `<td><span class="matrix-dot-low"></span></td>`;
+                return `<td></td>`;
+            }).join("");
+            return `<tr><td>${defect}</td>${cells}</tr>`;
+        }).join("");
+    } else {
+        matrixWrapper.style.display = "none";
+    }
+
+    // 3) 조치 가이드
+    const actionGuide = document.getElementById("actionGuide");
+    const actionEntries = Object.entries(analysis.actions);
+    if (actionEntries.length > 0) {
+        actionGuide.innerHTML = actionEntries.map(([type, actions]) => {
+            const badgeClass = getBadgeClass(type);
+            const listItems = actions.map(a => `<li>${a}</li>`).join("");
+            return `
+                <div class="action-card">
+                    <h5><span class="action-badge ${badgeClass}">${getShortName(type)}</span> 권장 조치</h5>
+                    <ul>${listItems}</ul>
+                </div>`;
+        }).join("");
+    } else {
+        actionGuide.innerHTML = "";
+    }
+}
+
+function getRiskLabel(level) {
+    const labels = { none: "양호", low: "낮음", medium: "주의", high: "위험" };
+    return labels[level] || level;
+}
+
+function getShortName(type) {
+    const map = {
+        "Open Defect (TSV-RDL)": "Open(TSV-RDL)",
+        "Open Defect (Bump)": "Open(Bump)",
+        "Short Defect (Bump)": "Short(Bump)",
+        "Void Formation (TSV)": "Void(TSV)",
+        "Incomplete Fill (TSV)": "Incomplete Fill",
+    };
+    return map[type] || type;
 }
 
 function getBadgeClass(type) {
@@ -175,6 +262,7 @@ function getBadgeClass(type) {
         "Open Defect (Bump)": "badge-open-bump",
         "Short Defect (Bump)": "badge-short-bump",
         "Void Formation (TSV)": "badge-void-tsv",
+        "Incomplete Fill (TSV)": "badge-incomplete-fill",
     };
     return map[type] || "";
 }

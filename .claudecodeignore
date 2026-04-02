@@ -1,0 +1,22 @@
+# 빌드 및 의존성
+node_modules/
+dist/
+build/
+.next/
+.git/
+
+# 로그 및 데이터
+*.log
+*.csv
+*.json
+*.sql
+
+# 이미지 및 미디어
+public/assets/
+*.png
+*.jpg
+*.svg
+
+# 캐시 및 환경설정
+.cache/
+.env*
