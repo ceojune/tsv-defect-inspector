@@ -421,11 +421,11 @@ class TSVDefectAnalyzer:
         # 밝은 영역 탐지 (브릿지는 범프와 비슷하게 밝음)
         _, binary_bright = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-        # TSV 기둥 영역을 제외 — 기둥 사이 seam도 오탐하지 않도록 더 넓게 팽창
+        # TSV 기둥 영역을 제외 — 기둥 및 기둥 사이 seam 영역까지 넓게 팽창
         tsv_mask_for_short = None
         if tsv_mask is not None:
-            kernel_excl = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
-            tsv_mask_for_short = cv2.dilate(tsv_mask, kernel_excl, iterations=2)
+            kernel_excl = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+            tsv_mask_for_short = cv2.dilate(tsv_mask, kernel_excl, iterations=3)
             tsv_roi = tsv_mask_for_short[y_start:y_end, :]
             if tsv_roi.shape == binary_bright.shape:
                 binary_bright = cv2.bitwise_and(binary_bright, cv2.bitwise_not(tsv_roi))
@@ -457,7 +457,7 @@ class TSVDefectAnalyzer:
             excl_mask = tsv_mask_for_short if tsv_mask_for_short is not None else tsv_mask
             if excl_mask is not None:
                 roi_tsv = excl_mask[y_global:y_global + ch, x:x + cw]
-                if roi_tsv.size > 0 and np.mean(roi_tsv > 0) > 0.5:
+                if roi_tsv.size > 0 and np.mean(roi_tsv > 0) > 0.3:
                     continue
 
             # 가로로 넓은 형태 (브릿지)
@@ -658,15 +658,14 @@ class TSVDefectAnalyzer:
             return defects
         tsv_mean = np.mean(tsv_pixels)
 
-        # TSV 마스크를 약간 팽창시켜 경계 부근의 incomplete fill도 포함
+        # TSV 마스크를 넓게 팽창시켜 경계 부근 및 기둥 사이 seam도 포함
         # (Otsu 임계로 만든 마스크가 seam 영역을 경계에서 잘라낼 수 있어요)
-        # 기둥 사이 seam도 포착하려면 더 넓게 팽창 (5x5 1회 → 9x9 2회)
-        kernel_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
-        tsv_mask_expanded = cv2.dilate(tsv_mask, kernel_dilate, iterations=2)
+        kernel_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+        tsv_mask_expanded = cv2.dilate(tsv_mask, kernel_dilate, iterations=3)
 
         # ── 패스 A: 어두운 seam 탐지 (void/gap형 균열) ──────────────────
-        # 임계값을 0.68 → 0.75로 완화: 살짝 밝은 seam도 잡아요
-        dark_threshold = tsv_mean * 0.75
+        # 임계값 0.82: Cu 평균보다 18% 이상 어두우면 seam 후보
+        dark_threshold = tsv_mean * 0.82
         dark_mask = (denoised < dark_threshold).astype(np.uint8) * 255
         dark_in_tsv = cv2.bitwise_and(dark_mask, tsv_mask_expanded)
 
@@ -674,7 +673,7 @@ class TSVDefectAnalyzer:
         # FIB로 단면을 자르면 seam 표면에서 전자가 더 많이 방출되어
         # Cu 평균보다 오히려 밝게 보여요 — 사과를 칼로 잘랐을 때 단면이 하얗게
         # 빛나는 것과 같은 원리예요
-        bright_threshold = tsv_mean * 1.12
+        bright_threshold = tsv_mean * 1.05
         bright_mask = (denoised > bright_threshold).astype(np.uint8) * 255
         bright_in_tsv = cv2.bitwise_and(bright_mask, tsv_mask_expanded)
 
@@ -698,25 +697,25 @@ class TSVDefectAnalyzer:
 
             for cnt in contours:
                 area = cv2.contourArea(cnt)
-                if area < self.min_defect_area * 2 or area > self.max_defect_area:
+                if area < self.min_defect_area or area > self.max_defect_area:
                     continue
 
                 x, y, cw, ch = cv2.boundingRect(cnt)
 
-                # 세로로 길쭉해야 함 (높이/너비 ≥ 2.0, 기존 2.5에서 완화)
+                # 세로로 길쭉해야 함 (높이/너비 ≥ 1.3)
                 aspect = ch / (cw + 1e-5)
-                if aspect < 2.0:
+                if aspect < 1.3:
                     continue
 
-                # TSV 기둥 세로 범위의 15% 이상을 차지해야 함 (기존 20% → 완화)
+                # TSV 기둥 세로 범위의 8% 이상을 차지해야 함
                 col_slice = tsv_mask[:, max(x, 0):min(x + cw, w)]
                 tsv_col_height = int(np.sum(np.any(col_slice > 0, axis=1)))
-                if tsv_col_height > 0 and ch < tsv_col_height * 0.15:
+                if tsv_col_height > 0 and ch < tsv_col_height * 0.08:
                     continue
 
                 # TSV(팽창 마스크) 내부 포함 비율 확인
                 roi_mask = tsv_mask_expanded[y:y + ch, x:x + cw]
-                if roi_mask.size == 0 or np.mean(roi_mask > 0) < 0.30:
+                if roi_mask.size == 0 or np.mean(roi_mask > 0) < 0.15:
                     continue
 
                 roi_region = gray[y:y + ch, x:x + cw]
@@ -726,13 +725,13 @@ class TSVDefectAnalyzer:
                 brightness_ratio = mean_val / (tsv_mean + 1e-5)
 
                 if mode == "dark":
-                    # 어두운 seam: 비율이 0.85 이하여야 함 (기존 0.78 → 완화)
-                    if brightness_ratio > 0.85:
+                    # 어두운 seam: 비율이 0.92 이하여야 함
+                    if brightness_ratio > 0.92:
                         continue
                     anomaly_score = 1 - brightness_ratio
                 else:
-                    # 밝은 seam: 비율이 1.08 이상이어야 함
-                    if brightness_ratio < 1.08:
+                    # 밝은 seam: 비율이 1.03 이상이어야 함
+                    if brightness_ratio < 1.03:
                         continue
                     anomaly_score = brightness_ratio - 1.0
 
@@ -748,7 +747,7 @@ class TSVDefectAnalyzer:
                     continue
                 seen_boxes.append((x, y, cw, ch))
 
-                aspect_bonus = min((aspect - 2.0) / 10.0, 0.18)
+                aspect_bonus = min((aspect - 1.3) / 10.0, 0.18)
                 size_bonus = min(area / 6000, 0.15)
                 confidence = min(0.93, 0.42 + anomaly_score * 0.30 + aspect_bonus + size_bonus)
 
@@ -758,6 +757,77 @@ class TSVDefectAnalyzer:
                     "confidence": round(float(confidence), 2),
                     "contour": cnt,
                 })
+
+        # ── 패스 C: 에지 기반 세로 seam 탐지 ──────────────────────────
+        # 밝기 차이가 미묘해서 패스 A/B가 놓치는 seam을 Canny 에지로 잡아요
+        # Cu 내부에 세로 에지가 있으면 → seam/crack 가능성이 높아요
+        edges = cv2.Canny(denoised, 30, 100)
+        edges_in_tsv = cv2.bitwise_and(edges, tsv_mask_expanded)
+
+        # 세로 방향 연결
+        kernel_v_edge = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(h // 10, 10)))
+        edge_vertical = cv2.morphologyEx(edges_in_tsv, cv2.MORPH_CLOSE, kernel_v_edge, iterations=2)
+
+        # 가로 에지 제거 (seam은 세로이므로)
+        kernel_h_remove = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1))
+        edge_vertical = cv2.morphologyEx(edge_vertical, cv2.MORPH_OPEN, kernel_h_remove, iterations=1)
+        # 세로 에지만 남기기
+        kernel_v_open = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(h // 15, 8)))
+        edge_vertical = cv2.morphologyEx(edge_vertical, cv2.MORPH_OPEN, kernel_v_open, iterations=1)
+
+        # 에지를 약간 팽창시켜 인접 에지를 하나로 합침 (seam 양쪽 에지)
+        kernel_merge = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 3))
+        edge_merged = cv2.dilate(edge_vertical, kernel_merge, iterations=1)
+
+        contours_edge, _ = cv2.findContours(edge_merged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        for cnt in contours_edge:
+            area = cv2.contourArea(cnt)
+            if area < self.min_defect_area or area > self.max_defect_area:
+                continue
+
+            x, y, cw, ch = cv2.boundingRect(cnt)
+
+            aspect = ch / (cw + 1e-5)
+            if aspect < 1.3:
+                continue
+
+            # TSV 기둥 높이 대비 8% 이상
+            col_slice = tsv_mask[:, max(x, 0):min(x + cw, w)]
+            tsv_col_height = int(np.sum(np.any(col_slice > 0, axis=1)))
+            if tsv_col_height > 0 and ch < tsv_col_height * 0.08:
+                continue
+
+            # TSV 내부에 있어야 함
+            roi_mask = tsv_mask_expanded[y:y + ch, x:x + cw]
+            if roi_mask.size == 0 or np.mean(roi_mask > 0) < 0.15:
+                continue
+
+            # 기존 박스와 중복 확인
+            is_dup = False
+            for sx, sy, sw, sh in seen_boxes:
+                inter_x = max(0, min(x + cw, sx + sw) - max(x, sx))
+                inter_y = max(0, min(y + ch, sy + sh) - max(y, sy))
+                if inter_x * inter_y > 0.3 * cw * ch:
+                    is_dup = True
+                    break
+            if is_dup:
+                continue
+            seen_boxes.append((x, y, cw, ch))
+
+            # 에지 강도 기반 confidence
+            edge_roi = edges_in_tsv[y:y + ch, x:x + cw]
+            edge_density = np.mean(edge_roi > 0) if edge_roi.size > 0 else 0
+            aspect_bonus = min((aspect - 1.3) / 10.0, 0.18)
+            size_bonus = min(area / 6000, 0.15)
+            confidence = min(0.93, 0.45 + edge_density * 0.25 + aspect_bonus + size_bonus)
+
+            defects.append({
+                "type": "Incomplete Fill (TSV)",
+                "bbox": [int(x), int(y), int(cw), int(ch)],
+                "confidence": round(float(confidence), 2),
+                "contour": cnt,
+            })
 
         return defects
 
