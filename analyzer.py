@@ -1,7 +1,7 @@
 """
 TSV 결함 탐지 엔진 v2
 =====================
-SEM/FIB 단면(cross-section) 이미지에서 4가지 TSV 결함을 탐지하는 모듈.
+SEM/FIB cross-section 이미지에서 4가지 TSV 결함을 탐지하는 모듈.
 
 결함 유형:
   1. Open Defect (TSV-RDL)  — TSV-RDL 접합부의 갭
@@ -44,9 +44,9 @@ DEFECT_DESCRIPTIONS = {
         "저항값 변화를 유발하고 기계적·열적 스트레스에서 치명적이에요."
     ),
     "Incomplete Fill (TSV)": (
-        "전기도금(electroplating) 중 구리가 TSV 내부를 완전히 채우지 못해 세로 방향의 균열(crack) "
-        "또는 심(seam)이 생긴 상태예요. 도금액 첨가제 비율 불균형이나 과도한 전류밀도로 "
-        "바텀업(bottom-up) 충전이 실패할 때 주로 발생해요."
+        "electroplating 중 구리가 TSV 내부를 완전히 채우지 못해 세로 방향의 crack "
+        "또는 seam이 생긴 상태예요. 도금액 첨가제 비율 불균형이나 과도한 전류밀도로 "
+        "bottom-up 충전이 실패할 때 주로 발생해요."
     ),
 }
 
@@ -89,29 +89,29 @@ DEFECT_TO_MATRIX_ROWS = {
 DEFECT_ACTIONS = {
     "Open Defect (TSV-RDL)": [
         "Cu 도금 전해액의 농도·온도·전류밀도 조건을 점검하세요.",
-        "TSV 홀의 종횡비(aspect ratio)가 도금 한계를 초과하는지 확인하세요.",
+        "TSV 홀의 aspect ratio가 도금 한계를 초과하는지 확인하세요.",
         "Liner/Seed layer 균일성을 SEM으로 검증하세요.",
     ],
     "Open Defect (Bump)": [
-        "범프 높이 균일도(coplanarity)를 측정하세요.",
+        "bump coplanarity를 측정하세요.",
         "본딩 온도·압력·시간 프로파일을 재검토하세요.",
         "UBM 표면 산화 여부를 확인하세요.",
     ],
     "Short Defect (Bump)": [
         "범프 피치 대비 범프 직경 비율을 확인하세요.",
-        "본딩 압착력(bonding force)이 과도하지 않은지 점검하세요.",
-        "언더필(underfill) 유동 특성을 검토하세요.",
+        "bonding force가 과도하지 않은지 점검하세요.",
+        "underfill 유동 특성을 검토하세요.",
     ],
     "Void Formation (TSV)": [
-        "도금 전해액의 첨가제(accelerator/suppressor) 비율을 조정하세요.",
-        "도금 전류 파형(DC vs Pulse)을 최적화하세요.",
-        "열처리(annealing) 프로파일에서 급격한 온도 변화를 완화하세요.",
+        "도금 전해액의 accelerator/suppressor 비율을 조정하세요.",
+        "도금 전류 waveform(DC vs Pulse)을 최적화하세요.",
+        "annealing 프로파일에서 급격한 온도 변화를 완화하세요.",
     ],
     "Incomplete Fill (TSV)": [
         "도금 전해액의 Accelerator/Suppressor/Leveler 삼중 첨가제 비율을 재조정하세요.",
-        "전류밀도를 낮추고 펄스 도금(pulse plating)으로 전환해 바텀업(bottom-up) 충전을 유도하세요.",
-        "TSV 종횡비(aspect ratio)가 도금 공정 한계를 초과하는지 시뮬레이션으로 검증하세요.",
-        "도금 전 씨드층(seed layer) 균일도를 SEM으로 확인하세요.",
+        "전류밀도를 낮추고 pulse plating으로 전환해 bottom-up 충전을 유도하세요.",
+        "TSV aspect ratio가 도금 공정 한계를 초과하는지 시뮬레이션으로 검증하세요.",
+        "도금 전 seed layer 균일도를 SEM으로 확인하세요.",
     ],
 }
 
@@ -252,7 +252,7 @@ class TSVDefectAnalyzer:
 
     def detect_open_defect_tsv_rdl(self, gray, denoised, layers, tsv_mask=None):
         """
-        TSV 상단-RDL 접합부에서 어두운 갭(gap)을 탐지.
+        TSV 상단-RDL 접합부에서 어두운 gap을 탐지.
         - 위치: 이미지 상단 1/3 영역
         - 특징: TSV 구조(세로로 밝은 기둥) 바로 위에 있는 어두운 틈
         - TSV 기둥 내부의 어두운 점은 Void이므로 제외
@@ -421,9 +421,12 @@ class TSVDefectAnalyzer:
         # 밝은 영역 탐지 (브릿지는 범프와 비슷하게 밝음)
         _, binary_bright = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-        # TSV 기둥 영역을 제외 — 정상 TSV를 Short로 오탐하지 않기 위해
+        # TSV 기둥 영역을 제외 — 기둥 사이 seam도 오탐하지 않도록 더 넓게 팽창
+        tsv_mask_for_short = None
         if tsv_mask is not None:
-            tsv_roi = tsv_mask[y_start:y_end, :]
+            kernel_excl = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+            tsv_mask_for_short = cv2.dilate(tsv_mask, kernel_excl, iterations=2)
+            tsv_roi = tsv_mask_for_short[y_start:y_end, :]
             if tsv_roi.shape == binary_bright.shape:
                 binary_bright = cv2.bitwise_and(binary_bright, cv2.bitwise_not(tsv_roi))
 
@@ -450,9 +453,10 @@ class TSVDefectAnalyzer:
             x, y_local, cw, ch = cv2.boundingRect(cnt)
             y_global = y_local + y_start
 
-            # TSV 기둥 내부에 포함된 영역은 건너뜀
-            if tsv_mask is not None:
-                roi_tsv = tsv_mask[y_global:y_global + ch, x:x + cw]
+            # TSV 기둥 내부 또는 인접 영역에 포함된 영역은 건너뜀 (팽창 마스크 사용)
+            excl_mask = tsv_mask_for_short if tsv_mask_for_short is not None else tsv_mask
+            if excl_mask is not None:
+                roi_tsv = excl_mask[y_global:y_global + ch, x:x + cw]
                 if roi_tsv.size > 0 and np.mean(roi_tsv > 0) > 0.5:
                     continue
 
@@ -486,7 +490,7 @@ class TSVDefectAnalyzer:
 
     def detect_void_formation(self, gray, denoised, tsv_mask=None):
         """
-        TSV 내부의 어두운 공동(void)을 탐지.
+        TSV 내부의 void를 탐지.
 
         핵심 아이디어: TSV 기둥은 구리로 채워져 밝아야 하는데, 그 안에 어두운 점이
         있으면 void예요. 아이스크림 안에 기포가 있는 것처럼, 밝은 구리 기둥 안의
@@ -630,10 +634,10 @@ class TSVDefectAnalyzer:
 
     def detect_incomplete_fill(self, gray, denoised, tsv_mask=None):
         """
-        TSV 내부의 세로 방향 균열(crack/seam)을 탐지.
+        TSV 내부의 세로 방향 crack/seam을 탐지.
 
-        전기도금 중 바텀업(bottom-up) 충전이 실패하면, 구리가 TSV 측벽에서만 자라다가
-        중심부에서 맞닿으면서 세로 심(seam)을 남겨요. 빵 반죽이 오븐에서 중심부까지
+        electroplating 중 bottom-up 충전이 실패하면, 구리가 TSV 측벽에서만 자라다가
+        중심부에서 맞닿으면서 세로 seam을 남겨요. 빵 반죽이 오븐에서 중심부까지
         익지 않고 겉만 굳어버리는 것과 비슷해요.
 
         탐지 전략:
@@ -656,8 +660,9 @@ class TSVDefectAnalyzer:
 
         # TSV 마스크를 약간 팽창시켜 경계 부근의 incomplete fill도 포함
         # (Otsu 임계로 만든 마스크가 seam 영역을 경계에서 잘라낼 수 있어요)
-        kernel_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        tsv_mask_expanded = cv2.dilate(tsv_mask, kernel_dilate, iterations=1)
+        # 기둥 사이 seam도 포착하려면 더 넓게 팽창 (5x5 1회 → 9x9 2회)
+        kernel_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+        tsv_mask_expanded = cv2.dilate(tsv_mask, kernel_dilate, iterations=2)
 
         # ── 패스 A: 어두운 seam 탐지 (void/gap형 균열) ──────────────────
         # 임계값을 0.68 → 0.75로 완화: 살짝 밝은 seam도 잡아요
@@ -666,7 +671,7 @@ class TSVDefectAnalyzer:
         dark_in_tsv = cv2.bitwise_and(dark_mask, tsv_mask_expanded)
 
         # ── 패스 B: 밝은 seam 탐지 (FIB-SEM 2차전자 방출 과다형 균열) ──
-        # FIB로 단면을 자르면 세엄(seam) 표면에서 전자가 더 많이 방출되어
+        # FIB로 단면을 자르면 seam 표면에서 전자가 더 많이 방출되어
         # Cu 평균보다 오히려 밝게 보여요 — 사과를 칼로 잘랐을 때 단면이 하얗게
         # 빛나는 것과 같은 원리예요
         bright_threshold = tsv_mean * 1.12
@@ -765,7 +770,15 @@ class TSVDefectAnalyzer:
         if len(defects) <= 1:
             return defects
 
-        defects.sort(key=lambda d: d["confidence"], reverse=True)
+        # Incomplete Fill이 Short(Bump)보다 우선 — 같은 위치 충돌 시 Incomplete Fill 유지
+        _PRIORITY = {
+            "Incomplete Fill (TSV)": 0,
+            "Void Formation (TSV)": 1,
+            "Open Defect (TSV-RDL)": 2,
+            "Open Defect (Bump)": 2,
+            "Short Defect (Bump)": 3,
+        }
+        defects.sort(key=lambda d: (_PRIORITY.get(d["type"], 2), -d["confidence"]))
         kept = []
 
         for defect in defects:

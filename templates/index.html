@@ -4,69 +4,107 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TSV Defect Inspector</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <header>
-        <h1>TSV Defect Inspector</h1>
-        <p class="subtitle">SEM/FIB 이미지를 업로드하면 TSV 결함을 자동으로 탐지합니다</p>
+
+    <!-- ===== 히어로 헤더 ===== -->
+    <header class="hero">
+        <div class="hero-bg"></div>
+        <div class="hero-content">
+            <span class="hero-badge">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="5" fill="#4ade80"/></svg>
+                AI-Powered · SEM/FIB Analysis
+            </span>
+            <h1 class="hero-title">TSV Defect Inspector</h1>
+            <p class="hero-sub">SEM/FIB 이미지를 업로드하면 TSV 결함을 자동으로 탐지합니다</p>
+            <div class="hero-stats">
+                <div class="hero-stat"><span>4</span>결함 유형</div>
+                <div class="hero-divider"></div>
+                <div class="hero-stat"><span>AI</span>자동 분석</div>
+                <div class="hero-divider"></div>
+                <div class="hero-stat"><span>16MB</span>최대 용량</div>
+            </div>
+        </div>
     </header>
 
     <main>
-        <!-- 업로드 -->
+        <!-- ===== 업로드 ===== -->
         <section class="upload-section">
             <div class="upload-area" id="uploadArea">
-                <div class="upload-icon">+</div>
-                <p class="upload-text">SEM/FIB 이미지를 드래그하거나 클릭해서 업로드</p>
-                <p class="upload-hint">PNG, JPG, TIFF, BMP  |  최대 16 MB</p>
+                <div class="upload-icon-wrap">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                </div>
+                <p class="upload-text">이미지를 드래그하거나 <span class="upload-link">클릭해서 업로드</span></p>
+                <p class="upload-hint">PNG · JPG · TIFF · BMP &nbsp;|&nbsp; 최대 16 MB</p>
                 <input type="file" id="fileInput" accept=".png,.jpg,.jpeg,.tif,.tiff,.bmp" hidden>
             </div>
         </section>
 
-        <!-- 미리보기 -->
+        <!-- ===== 미리보기 ===== -->
         <section class="preview-section" id="previewSection" style="display:none;">
             <div class="preview-card">
-                <h3>업로드된 이미지</h3>
+                <div class="preview-card-header">
+                    <span class="card-label">업로드된 이미지</span>
+                </div>
                 <img id="previewImage" alt="업로드된 SEM/FIB 이미지">
                 <div class="preview-actions">
-                    <button id="analyzeBtn" class="btn btn-primary">결함 분석 시작</button>
-                    <button id="resetBtn" class="btn btn-secondary">다시 선택</button>
+                    <button id="analyzeBtn" class="btn btn-primary">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                        결함 분석 시작
+                    </button>
+                    <button id="resetBtn" class="btn btn-ghost">다시 선택</button>
                 </div>
             </div>
         </section>
 
-        <!-- 로딩 -->
+        <!-- ===== 로딩 ===== -->
         <section class="loading-section" id="loadingSection" style="display:none;">
-            <div class="spinner"></div>
-            <p>이미지를 분석하고 있습니다</p>
+            <div class="loading-card">
+                <div class="spinner-ring">
+                    <div></div><div></div><div></div><div></div>
+                </div>
+                <p class="loading-title">분석 중</p>
+                <p class="loading-sub">이미지에서 결함 패턴을 추출하고 있어요</p>
+            </div>
         </section>
 
-        <!-- 결과 -->
+        <!-- ===== 결과 ===== -->
         <section class="result-section" id="resultSection" style="display:none;">
-            <h2>분석 결과</h2>
+            <div class="result-header">
+                <h2>분석 결과</h2>
+                <button id="newAnalysisBtn" class="btn btn-ghost btn-sm">새 이미지 분석</button>
+            </div>
 
             <div class="summary-cards" id="summaryCards"></div>
 
             <div class="image-comparison">
                 <div class="comparison-item">
-                    <h3>Original</h3>
+                    <span class="comparison-label">Original</span>
                     <img id="originalResult" alt="원본">
                 </div>
                 <div class="comparison-item">
-                    <h3>Detected</h3>
+                    <span class="comparison-label detected">Detected</span>
                     <img id="analyzedResult" alt="분석 결과">
                 </div>
             </div>
 
             <div class="defect-table-wrapper">
-                <h3>결함 상세</h3>
+                <div class="table-header">
+                    <h3>결함 상세</h3>
+                </div>
                 <table class="defect-table" id="defectTable">
                     <thead>
                         <tr>
                             <th>#</th>
                             <th>유형</th>
                             <th>위치 (x, y)</th>
-                            <th>크기 (w x h)</th>
+                            <th>크기 (w × h)</th>
                             <th>신뢰도</th>
                             <th>설명</th>
                         </tr>
@@ -74,19 +112,20 @@
                     <tbody></tbody>
                 </table>
                 <p class="no-defects" id="noDefects" style="display:none;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
                     결함이 탐지되지 않았습니다. 양품으로 판정됩니다.
                 </p>
             </div>
 
             <!-- 공정 원인 분석 -->
             <div class="process-analysis" id="processAnalysis" style="display:none;">
-                <h3>공정 원인 분석</h3>
-                <p class="process-desc">탐지된 결함을 기반으로 어느 공정 단계에서 문제가 발생했을 가능성이 높은지 분석한 결과입니다.</p>
+                <div class="process-analysis-header">
+                    <h3>공정 원인 분석</h3>
+                    <p class="process-desc">탐지된 결함을 기반으로 어느 공정 단계에서 문제가 발생했을 가능성이 높은지 분석한 결과입니다.</p>
+                </div>
 
-                <!-- 공정 파이프라인 -->
                 <div class="process-pipeline" id="processPipeline"></div>
 
-                <!-- 결함-공정 매트릭스 테이블 -->
                 <div class="matrix-wrapper" id="matrixWrapper" style="display:none;">
                     <h4>결함-공정 매핑 매트릭스</h4>
                     <table class="matrix-table" id="matrixTable">
@@ -95,33 +134,43 @@
                     </table>
                 </div>
 
-                <!-- 조치 가이드 -->
                 <div class="action-guide" id="actionGuide"></div>
-            </div>
-
-            <div style="text-align:center; margin-top:2rem;">
-                <button id="newAnalysisBtn" class="btn btn-primary">새 이미지 분석</button>
             </div>
         </section>
 
-        <!-- 결함 유형 가이드 — 2x2 대칭 -->
+        <!-- ===== 결함 유형 가이드 ===== -->
         <section class="guide-section">
-            <h2>결함 유형 가이드</h2>
+            <div class="guide-section-header">
+                <h2>결함 유형 가이드</h2>
+                <p class="guide-section-sub">TSV 공정에서 발생하는 4가지 주요 결함 유형이에요</p>
+            </div>
             <div class="guide-grid">
                 <div class="guide-card type-open-tsv">
-                    <h4><span class="guide-num">1</span>Open Defect (TSV-RDL)</h4>
+                    <div class="guide-card-top">
+                        <span class="guide-num">01</span>
+                        <h4>Open Defect <em>(TSV-RDL)</em></h4>
+                    </div>
                     <p>TSV와 RDL 사이 구리 충전이 불완전할 때 발생해요. 수도관 연결부가 안 맞아서 물이 새는 것처럼, 직렬 커패시턴스와 고저항 경로가 생겨 신호 전달이 방해돼요.</p>
                 </div>
                 <div class="guide-card type-open-bump">
-                    <h4><span class="guide-num">2</span>Open Defect (Bump)</h4>
+                    <div class="guide-card-top">
+                        <span class="guide-num">02</span>
+                        <h4>Open Defect <em>(Bump)</em></h4>
+                    </div>
                     <p>범프 크기가 불균일해 상대 다이에 닿지 못할 때 생겨요. 레고 블록 높이가 달라서 위층이 안 끼워지는 것처럼, 신호 경로가 전기적으로 끊겨요.</p>
                 </div>
                 <div class="guide-card type-short-bump">
-                    <h4><span class="guide-num">3</span>Short Defect (Bump)</h4>
+                    <div class="guide-card-top">
+                        <span class="guide-num">03</span>
+                        <h4>Short Defect <em>(Bump)</em></h4>
+                    </div>
                     <p>본딩 시 범프가 옆으로 퍼져 인접 범프와 맞닿는 상태예요. 빵 반죽을 누르면 옆 반죽과 붙는 것처럼, 의도치 않은 전기 경로와 발열이 생겨요.</p>
                 </div>
                 <div class="guide-card type-void-tsv">
-                    <h4><span class="guide-num">4</span>Void Formation (TSV)</h4>
+                    <div class="guide-card-top">
+                        <span class="guide-num">04</span>
+                        <h4>Void Formation <em>(TSV)</em></h4>
+                    </div>
                     <p>구리 충전 속도 불량이나 열응력으로 TSV 내부에 빈 공간이 생겨요. 아이스크림 속 기포처럼 보이며, 기계적·열적 스트레스 상황에서 치명적이에요.</p>
                 </div>
             </div>
@@ -129,7 +178,9 @@
     </main>
 
     <footer>
-        TSV Defect Inspector &mdash; SEM/FIB Image-Based Defect Detection
+        <span>TSV Defect Inspector</span>
+        <span class="footer-dot">·</span>
+        <span>SEM/FIB Image-Based Defect Detection</span>
     </footer>
 
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
