@@ -792,15 +792,21 @@ class TSVDefectAnalyzer:
             if aspect < 1.3:
                 continue
 
-            # TSV 기둥 높이 대비 8% 이상
+            # TSV 기둥 높이 대비 15% 이상 (패스 C는 에지 기반이라 작은 조각이 많아서 엄격하게)
             col_slice = tsv_mask[:, max(x, 0):min(x + cw, w)]
             tsv_col_height = int(np.sum(np.any(col_slice > 0, axis=1)))
-            if tsv_col_height > 0 and ch < tsv_col_height * 0.08:
+            if tsv_col_height > 0 and ch < tsv_col_height * 0.15:
                 continue
 
-            # TSV 내부에 있어야 함
+            # TSV 내부에 있어야 함 (팽창 마스크)
             roi_mask = tsv_mask_expanded[y:y + ch, x:x + cw]
             if roi_mask.size == 0 or np.mean(roi_mask > 0) < 0.15:
+                continue
+
+            # 원본 TSV 마스크 내부 비율 — 경계 에지는 원본 마스크와 겹침이 적어요
+            # seam은 Cu 기둥 내부에 있으므로 원본 마스크와 40% 이상 겹쳐야 함
+            roi_orig = tsv_mask[y:y + ch, x:x + cw]
+            if roi_orig.size == 0 or np.mean(roi_orig > 0) < 0.40:
                 continue
 
             # 기존 박스와 중복 확인
