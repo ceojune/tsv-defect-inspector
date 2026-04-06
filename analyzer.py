@@ -347,33 +347,41 @@ class TSVDefectAnalyzer:
         defects = []
         h, w = gray.shape
 
-        # 탐색 영역: upper_third 아래부터 하단 전체
-        # 범프-TSV 사이 gap이 이미지 중간에 위치하는 경우도 커버
-        y_start = max(layers["upper_third"] - int(h * 0.05), 0)
+        # 탐색 영역: upper_third ~ bottom (범프는 이미지 중간~하단에 위치)
+        y_start = layers["upper_third"]
         y_end = layers["bottom"]
         roi = denoised[y_start:y_end, :]
 
         if roi.size == 0:
             return defects
 
-        # 적응형 이진화
+        global_mean = np.mean(gray)
+
+        # ── 방법 A: 적응형 이진화 (작은~중간 크기 gap 탐지) ────────────
         binary = cv2.adaptiveThreshold(
             roi, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV, 21, 10
+            cv2.THRESH_BINARY_INV, 51, 8
         )
-
-        # 가로 방향 구조 강조 (범프 사이 갭은 가로로 이어질 수 있음)
-        kernel_h = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1))
+        kernel_h = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 1))
         binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel_h, iterations=1)
-
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        cleaned = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+        cleaned_a = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
 
-        contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # ── 방법 B: 전역 임계값 (범프 위 큰 어두운 gap 탐지) ──────────
+        # 범프 표면의 오목한 dark 영역 — 적응형으로는 놓치는 큰 영역 보완
+        void_thresh = int(global_mean * 0.65)
+        _, dark_global = cv2.threshold(roi, void_thresh, 255, cv2.THRESH_BINARY_INV)
+        kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        cleaned_b = cv2.morphologyEx(dark_global, cv2.MORPH_CLOSE, kernel_close, iterations=2)
+        cleaned_b = cv2.morphologyEx(cleaned_b, cv2.MORPH_OPEN, kernel, iterations=1)
+
+        # 두 방법의 결과를 합산
+        combined = cv2.bitwise_or(cleaned_a, cleaned_b)
+        contours, _ = cv2.findContours(combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < self.min_defect_area or area > self.max_defect_area * 0.3:
+            if area < self.min_defect_area or area > self.max_defect_area * 0.5:
                 continue
 
             x, y_local, cw, ch = cv2.boundingRect(cnt)
@@ -385,47 +393,53 @@ class TSVDefectAnalyzer:
                 if roi_tsv.size > 0 and np.mean(roi_tsv > 0) > 0.7:
                     continue
 
-            # 가로로 넓은 갭 형태 (범프 gap은 가로로 이어지므로)
+            # 종횡비: 가로로 어느 정도 이어진 gap 형태 (너무 세로로 좁은 것 제외)
             aspect = cw / (ch + 1e-5)
-            if aspect < 0.8:
+            if aspect < 0.5:
                 continue
 
-            # 너무 큰 영역은 배경이므로 제외 (면적 상한 강화)
-            if area > self.max_defect_area * 0.15:
+            # 이미지 전체 너비의 95% 이상이면 배경 레이어로 판단 (제외)
+            if cw > w * 0.95:
                 continue
 
             roi_region = gray[y_global:y_global + ch, x:x + cw]
             if roi_region.size == 0:
                 continue
             mean_val = np.mean(roi_region)
-            global_mean = np.mean(gray)
 
-            # gap은 전체 평균보다 어두워야 하지만, 완전한 배경(매우 어두움)은 제외
-            # 배경(기판)보다는 밝고 범프보다는 어두운 중간 영역이 gap
-            if mean_val < global_mean * 0.30:
-                continue  # 너무 어두우면 배경(기판/Si Sub)으로 판단
+            # 너무 밝으면(범프 자체) 또는 너무 어두우면(완전 배경) 제외
+            if mean_val > global_mean * 0.80:
+                continue
+            if mean_val < global_mean * 0.20:
+                continue
 
-            if mean_val < global_mean * 0.72:
-                # 인접 행에 밝은 범프 구조물이 있는지 확인 (gap 위아래에 밝은 금속 필요)
-                above_y = max(y_global - ch, 0)
-                below_y = min(y_global + 2 * ch, h)
-                above_region = gray[above_y:y_global, x:x + cw]
-                below_region = gray[y_global + ch:below_y, x:x + cw]
-                has_bright_neighbor = (
-                    (above_region.size > 0 and np.mean(above_region) > global_mean * 0.9) or
-                    (below_region.size > 0 and np.mean(below_region) > global_mean * 0.9)
-                )
-                if not has_bright_neighbor:
-                    continue
+            # 인접 영역에 밝은 범프 구조물이 있어야 함
+            # gap 아래 또는 가로 양옆에 밝은 금속이 있으면 범프 위 gap으로 판단
+            pad = max(ch, 10)
+            below_y1 = min(y_global + ch, h)
+            below_y2 = min(y_global + ch + pad, h)
+            below_region = gray[below_y1:below_y2, x:x + cw]
 
-                darkness_score = 1 - (mean_val / global_mean)
-                confidence = min(0.95, 0.38 + darkness_score * 0.4 + min(area / 3000, 0.17))
-                defects.append({
-                    "type": "Open Defect (Bump)",
-                    "bbox": [int(x), int(y_global), int(cw), int(ch)],
-                    "confidence": round(float(confidence), 2),
-                    "contour": cnt,
-                })
+            side_left = gray[y_global:y_global + ch, max(x - pad, 0):x]
+            side_right = gray[y_global:y_global + ch, x + cw:min(x + cw + pad, w)]
+
+            bright_thresh = global_mean * 0.80
+            has_bright_neighbor = (
+                (below_region.size > 0 and np.mean(below_region) > bright_thresh) or
+                (side_left.size > 0 and np.mean(side_left) > bright_thresh) or
+                (side_right.size > 0 and np.mean(side_right) > bright_thresh)
+            )
+            if not has_bright_neighbor:
+                continue
+
+            darkness_score = 1 - (mean_val / global_mean)
+            confidence = min(0.95, 0.38 + darkness_score * 0.45 + min(area / 4000, 0.17))
+            defects.append({
+                "type": "Open Defect (Bump)",
+                "bbox": [int(x), int(y_global), int(cw), int(ch)],
+                "confidence": round(float(confidence), 2),
+                "contour": cnt,
+            })
 
         return defects
 
@@ -496,6 +510,10 @@ class TSVDefectAnalyzer:
             # 가로로 넓은 형태 (브릿지)
             aspect = cw / (ch + 1e-5)
             if aspect < 1.5:
+                continue
+
+            # 이미지 전체 너비의 70% 이상 spanning → 단일 수평 선(RDL/wire/scale bar)으로 판단, 제외
+            if cw > w * 0.70:
                 continue
 
             # 밝기 확인 — 브릿지는 밝아야 함
