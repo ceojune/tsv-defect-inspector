@@ -205,7 +205,18 @@ class TSVDefectAnalyzer:
         kernel_clean = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
         tsv_mask = cv2.morphologyEx(tsv_mask, cv2.MORPH_OPEN, kernel_clean, iterations=2)
 
-        return tsv_mask
+        # 형태 필터: 세로 기둥(height > width)만 TSV로 인정
+        # 범프·RDL 등 가로로 넓은 구조물은 TSV 마스크에서 제외
+        contours_shape, _ = cv2.findContours(tsv_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        filtered_mask = np.zeros_like(tsv_mask)
+        for cnt in contours_shape:
+            _, _, cw, ch = cv2.boundingRect(cnt)
+            # TSV 기둥 조건: 세로가 가로보다 길고, 이미지 높이의 10% 이상
+            col_aspect = ch / (cw + 1e-5)
+            if col_aspect >= 1.5 and ch >= h * 0.10:
+                cv2.drawContours(filtered_mask, [cnt], -1, 255, -1)
+
+        return filtered_mask
 
     def _find_sem_info_bar_height(self, gray):
         """
@@ -329,15 +340,16 @@ class TSVDefectAnalyzer:
     def detect_open_defect_bump(self, gray, denoised, layers, tsv_mask=None):
         """
         범프-다이 접합부에서 어두운 갭을 탐지.
-        - 위치: 이미지 하단 1/3 영역
+        - 위치: 이미지 상단 1/3 아래 ~ 하단 전체 (범프가 이미지 중간에 위치할 수 있음)
         - 특징: 범프(밝은 블록) 사이/위에 있는 어두운 틈
         - TSV 기둥 내부의 어두운 점은 제외
         """
         defects = []
         h, w = gray.shape
 
-        # 하단 영역 (범프-다이 접합부)
-        y_start = max(layers["lower_third"] - int(h * 0.1), 0)
+        # 탐색 영역: upper_third 아래부터 하단 전체
+        # 범프-TSV 사이 gap이 이미지 중간에 위치하는 경우도 커버
+        y_start = max(layers["upper_third"] - int(h * 0.05), 0)
         y_end = layers["bottom"]
         roi = denoised[y_start:y_end, :]
 
@@ -373,9 +385,13 @@ class TSVDefectAnalyzer:
                 if roi_tsv.size > 0 and np.mean(roi_tsv > 0) > 0.7:
                     continue
 
-            # 가로로 넓은 갭 형태
+            # 가로로 넓은 갭 형태 (범프 gap은 가로로 이어지므로)
             aspect = cw / (ch + 1e-5)
-            if aspect < 0.5:
+            if aspect < 0.8:
+                continue
+
+            # 너무 큰 영역은 배경이므로 제외 (면적 상한 강화)
+            if area > self.max_defect_area * 0.15:
                 continue
 
             roi_region = gray[y_global:y_global + ch, x:x + cw]
@@ -384,7 +400,24 @@ class TSVDefectAnalyzer:
             mean_val = np.mean(roi_region)
             global_mean = np.mean(gray)
 
-            if mean_val < global_mean * 0.70:
+            # gap은 전체 평균보다 어두워야 하지만, 완전한 배경(매우 어두움)은 제외
+            # 배경(기판)보다는 밝고 범프보다는 어두운 중간 영역이 gap
+            if mean_val < global_mean * 0.30:
+                continue  # 너무 어두우면 배경(기판/Si Sub)으로 판단
+
+            if mean_val < global_mean * 0.72:
+                # 인접 행에 밝은 범프 구조물이 있는지 확인 (gap 위아래에 밝은 금속 필요)
+                above_y = max(y_global - ch, 0)
+                below_y = min(y_global + 2 * ch, h)
+                above_region = gray[above_y:y_global, x:x + cw]
+                below_region = gray[y_global + ch:below_y, x:x + cw]
+                has_bright_neighbor = (
+                    (above_region.size > 0 and np.mean(above_region) > global_mean * 0.9) or
+                    (below_region.size > 0 and np.mean(below_region) > global_mean * 0.9)
+                )
+                if not has_bright_neighbor:
+                    continue
+
                 darkness_score = 1 - (mean_val / global_mean)
                 confidence = min(0.95, 0.38 + darkness_score * 0.4 + min(area / 3000, 0.17))
                 defects.append({
