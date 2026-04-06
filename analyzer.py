@@ -211,9 +211,11 @@ class TSVDefectAnalyzer:
         filtered_mask = np.zeros_like(tsv_mask)
         for cnt in contours_shape:
             _, _, cw, ch = cv2.boundingRect(cnt)
-            # TSV 기둥 조건: 세로가 가로보다 길고, 이미지 높이의 10% 이상
+            # TSV 기둥 조건: 세로 방향 구조물 (가로 폭의 0.8배 이상 높이)
+            # - 범프는 col_aspect ≈ 0.1~0.2 (매우 납작) → 제외됨
+            # - 넓은 화각의 TSV 기둥은 col_aspect ≈ 1.0~1.5 → 통과
             col_aspect = ch / (cw + 1e-5)
-            if col_aspect >= 1.5 and ch >= h * 0.10:
+            if col_aspect >= 0.8 and ch >= h * 0.10:
                 cv2.drawContours(filtered_mask, [cnt], -1, 255, -1)
 
         return filtered_mask
@@ -229,21 +231,25 @@ class TSVDefectAnalyzer:
         h = gray.shape[0]
         max_bar_height = int(h * 0.15)
 
-        # 빠른 사전 확인: 맨 아래 3행이 어둡지 않으면 정보 바 없음
-        if np.mean(gray[max(h - 3, 0):h, :]) > 55:
+        # 빠른 사전 확인: 하단 10행 중 최소 한 행이 매우 어두워야 정보 바 존재
+        # (눈금자/텍스트 밝은 행이 있어도 배경 행은 반드시 어두움)
+        bottom_window = gray[max(h - 10, 0):h, :]
+        row_means = np.mean(bottom_window, axis=1)
+        if np.min(row_means) > 60:
             return 0
 
-        # 아래서 위로 스캔 — 밝은 행이 연속 3개 이상 나오면 바 영역 종료
+        # 아래서 위로 스캔 — 밝은 행이 연속 5개 이상 나오면 바 영역 종료
+        # (눈금자 선 1~2행 정도는 바 내부로 허용, 연속 5행 밝아야 실제 이미지로 판단)
         bar_start = h
         bright_streak = 0
         for i in range(h - 1, max(h - max_bar_height, 0) - 1, -1):
             row_mean = np.mean(gray[i, :])
-            if row_mean < 70:  # 어두운 행 (바 영역 또는 텍스트 사이 검정)
+            if row_mean < 80:  # 어두운 행 (바 영역 또는 텍스트 사이 검정)
                 bar_start = i
                 bright_streak = 0
             else:
                 bright_streak += 1
-                if bright_streak >= 3:  # 밝은 행 3개 연속 → 실제 이미지 영역
+                if bright_streak >= 5:  # 밝은 행 5개 연속 → 실제 이미지 영역
                     break
 
         bar_height = h - bar_start
@@ -457,9 +463,9 @@ class TSVDefectAnalyzer:
         defects = []
         h, w = gray.shape
 
-        # 하단 영역
+        # 하단 영역 — 이미지 최하단 20%는 SEM 정보 바 / 기판 하층 영역이므로 제외
         y_start = max(layers["lower_third"] - int(h * 0.1), 0)
-        y_end = layers["bottom"]
+        y_end = min(layers["bottom"], int(h * 0.80))
         roi = denoised[y_start:y_end, :]
 
         if roi.size == 0:
@@ -710,9 +716,9 @@ class TSVDefectAnalyzer:
         tsv_mean = np.mean(tsv_pixels)
 
         # TSV 마스크를 넓게 팽창시켜 경계 부근 및 기둥 사이 seam도 포함
-        # (Otsu 임계로 만든 마스크가 seam 영역을 경계에서 잘라낼 수 있어요)
-        kernel_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
-        tsv_mask_expanded = cv2.dilate(tsv_mask, kernel_dilate, iterations=3)
+        # MORPH_OPEN 침식으로 잘려나간 경계 seam을 다시 커버하기 위해 충분히 팽창
+        kernel_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (20, 20))
+        tsv_mask_expanded = cv2.dilate(tsv_mask, kernel_dilate, iterations=4)
 
         # ── 패스 A: 어두운 seam 탐지 (void/gap형 균열) ──────────────────
         # 임계값 0.82: Cu 평균보다 18% 이상 어두우면 seam 후보
@@ -724,7 +730,8 @@ class TSVDefectAnalyzer:
         # FIB로 단면을 자르면 seam 표면에서 전자가 더 많이 방출되어
         # Cu 평균보다 오히려 밝게 보여요 — 사과를 칼로 잘랐을 때 단면이 하얗게
         # 빛나는 것과 같은 원리예요
-        bright_threshold = tsv_mean * 1.05
+        # 임계값 1.02: 미세한 밝기 차이도 감지 (경계부 seam은 대비가 크지 않을 수 있음)
+        bright_threshold = tsv_mean * 1.02
         bright_mask = (denoised > bright_threshold).astype(np.uint8) * 255
         bright_in_tsv = cv2.bitwise_and(bright_mask, tsv_mask_expanded)
 
@@ -781,8 +788,8 @@ class TSVDefectAnalyzer:
                         continue
                     anomaly_score = 1 - brightness_ratio
                 else:
-                    # 밝은 seam: 비율이 1.03 이상이어야 함
-                    if brightness_ratio < 1.03:
+                    # 밝은 seam: 비율이 1.01 이상이어야 함 (경계부 seam은 대비가 미세함)
+                    if brightness_ratio < 1.01:
                         continue
                     anomaly_score = brightness_ratio - 1.0
 
@@ -843,21 +850,21 @@ class TSVDefectAnalyzer:
             if aspect < 1.3:
                 continue
 
-            # TSV 기둥 높이 대비 15% 이상 (패스 C는 에지 기반이라 작은 조각이 많아서 엄격하게)
+            # TSV 기둥 높이 대비 8% 이상
             col_slice = tsv_mask[:, max(x, 0):min(x + cw, w)]
             tsv_col_height = int(np.sum(np.any(col_slice > 0, axis=1)))
-            if tsv_col_height > 0 and ch < tsv_col_height * 0.15:
+            if tsv_col_height > 0 and ch < tsv_col_height * 0.08:
                 continue
 
-            # TSV 내부에 있어야 함 (팽창 마스크)
+            # 팽창 마스크 내부에 있어야 함
             roi_mask = tsv_mask_expanded[y:y + ch, x:x + cw]
             if roi_mask.size == 0 or np.mean(roi_mask > 0) < 0.15:
                 continue
 
-            # 원본 TSV 마스크 내부 비율 — 경계 에지는 원본 마스크와 겹침이 적어요
-            # seam은 Cu 기둥 내부에 있으므로 원본 마스크와 40% 이상 겹쳐야 함
+            # 원본 TSV 마스크 내부 비율
+            # 경계부 seam은 MORPH_OPEN 침식 때문에 원본 마스크 밖으로 밀려남 → 기준 완화
             roi_orig = tsv_mask[y:y + ch, x:x + cw]
-            if roi_orig.size == 0 or np.mean(roi_orig > 0) < 0.40:
+            if roi_orig.size == 0 or np.mean(roi_orig > 0) < 0.15:
                 continue
 
             # 기존 박스와 중복 확인
